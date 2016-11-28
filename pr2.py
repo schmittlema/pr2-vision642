@@ -1,8 +1,10 @@
+#Project 2 Stereo Analysis
+#Matt Schmittle
+
 import cv2
 import copy as cp
 import numpy as np
 import numpy.ma as ma
-import matplotlib.pyplot as plt
 import math
 np.set_printoptions(threshold='nan')
 
@@ -52,7 +54,7 @@ def count_nonzeros(window):
     count3 = 0
     for row in range(0,r):
         for col in range(0,c):
-            if window[row,col] >20 and window[row,col] != 300:
+            if window[row,col] >=20 and window[row,col] != 300:
                 count+=1
             if window[row,col] == 300:
                 count3+=1
@@ -66,7 +68,12 @@ def averaging(window):
         for col in range(0,c):
             if window[row,col] != 300 and window[row,col] > 20:
                 sumw+= window[row,col]
-    avg = int(sumw/count)
+    try:
+        avg = int(sumw/count)
+    except:
+        avg = 20
+    if avg <20:
+        avg = 20
     return avg 
             
 def interpolate(din):
@@ -80,7 +87,8 @@ def interpolate(din):
                 while not(correct_window):
                     window = make_window(size,d,row,col)
                     nonz,count3 = count_nonzeros(window)
-                    if nonz<int(((size**2)-count3)/2):
+                    rw,cw = window.shape
+                    if nonz<int(((size**2)-count3)/2)and rw<r/8 and cw<c/8:
                         size += 2
                     else:
                         correct_window = True
@@ -88,6 +96,7 @@ def interpolate(din):
     return d
 
 def nearest(d,row,col):
+    r,c = d.shape
     search = 1
     res = 1
     found = False
@@ -149,7 +158,11 @@ def nearest(d,row,col):
             if avg <20:
                 avg = 20
         else:
-            search+=1
+            if search < r/8:
+                search+=1
+            else:
+                found = True
+                avg = 20
     return avg
 
 def interpolate_feature2(din,g):
@@ -172,8 +185,9 @@ def interpolate_feature2(din,g):
         for col in range(0,c):
             if d[row,col] == 0:
                 d[row,col] = nearest(d,row,col)
+    dum,maxd,mind = norm(d,20,255,2,'feature')
 
-    return d
+    return d,maxd,mind
                 
         
             
@@ -241,7 +255,7 @@ def remove_outliers(d,num,mino):
                 din[row,col] = mino 
     return din
 
-def norm(din,mino,maxo,mul):
+def norm(din,mino,maxo,mul,technique):
     d = remove_outliers(din,mul,mino)
     maxi = d.max()
     mini = d.min()
@@ -250,14 +264,15 @@ def norm(din,mino,maxo,mul):
     for row in range(0,r):
         for col in range(0,c):
             val = map_val(dout[row,col],mini,maxi,mino,maxo)
-            if val <20:
+            if technique !='feature'and val<20:
                 val = 20
             dout[row,col] = val
     return dout,maxi,mini
 
-def multi_region_window(gc,size,method,indisp,maxd,mind):
-    disp,mini,maxi = norm(indisp,mind,maxd,2)
+def multi_region_window(gc,size,method,indisp,maxd,mind,technique):
+    disp,mini,maxi = norm(indisp,mind,maxd,2,technique)
     r,c = gc.shape
+    num = c/18
     disparities = np.zeros((r,c/2))
     dr,dc = disparities.shape
     half_size = int(size/2)
@@ -280,8 +295,8 @@ def multi_region_window(gc,size,method,indisp,maxd,mind):
             try:
                 shift = (col-val)+c/2
             except:
-                print make_window(3,disp,row,col)
-            for colw in range(shift - 50,shift):
+                shift = col+(c/2)
+            for colw in range(shift - num,shift):
                 score = 100000
                 temp_window = make_window(size,gc,row,colw)
                 if method == "sad":
@@ -302,7 +317,6 @@ def multi_region_window(gc,size,method,indisp,maxd,mind):
                         temp = [score,colw,score2]
             backwards.append([row,col,temp[1]])
             replacement = np.full((size,size),abs(col-(temp[1]-(c/2))),np.uint64)
-            #print shift,temp[1],temp[1]-shift
             try:
                 disparities[row-half_size:row+half_size+1,col-half_size:col+half_size+1] = replacement
             except:
@@ -310,23 +324,19 @@ def multi_region_window(gc,size,method,indisp,maxd,mind):
                 replacement = np.full((rr,rc),(col-(temp[1]-c/2)),np.uint64)
                 disparities[row-half_size:row+half_size+1,col-half_size:col+half_size+1] = replacement
                 
-    disparities,maxdo,mindo = norm(disparities,20,255,2)
+    disparities,maxdo,mindo = norm(disparities,20,255,2,technique)
     disparities = disparities.astype(np.uint8)
     return disparities,backwards,maxdo,mindo
                 
-def region_window(gc,size,method):
+def region_window(gc,size,method,technique):
     r,c = gc.shape
+    num =c/18
     disparities = np.zeros((r,c/2))
     half_size = int(size/2)
     backwards = []
     count = 0
-    temps_plot = []
-    plty = []
-    plot_array= []
     for row in range(half_size,r,size):
         for col in range(half_size,c/2,size):
-            #row = 200
-            #col = 220
             window = make_window(size,gc,row,col)
             out_window = window
             window2 = make_window(size+2,gc,row,col)
@@ -334,16 +344,15 @@ def region_window(gc,size,method):
                 temp = [1000000,0,10000000]
             else:
                 temp = [1000000,-10000000000,10000000]
-            for colw in range((col+(c/2))-50,col+(c/2)):
-                score = 100000
-                temp_window = make_window(size,gc,row,colw)
+            for colw in range((col+(c/2))-num,col+(c/2)): 
+                score = 100000 
+                temp_window = make_window(size,gc,row,colw) 
                 if method == "sad":
                    score = sad(window,temp_window)
                 if method == "ssd":
                    score = ssd(window,temp_window)
                 if method == "ncc":
                    score = ncc(window,temp_window)
-                temps_plot.append(score)
                 if compare(score,temp[0],method):
                     t2w = make_window(size+2,gc,row,colw)
                     if method == "sad":
@@ -352,26 +361,9 @@ def region_window(gc,size,method):
                        score2 = ssd(window2,t2w)  
                     if method == "ncc":
                        score2 = ncc(window2,t2w)
-                    temps_plot.append(score)
                     if compare(score2,temp[2],method):
                         temp = [score,colw,score2]
-                        #plot_array.append(temp[1])
-                        plty.append(score)
-                    else:
-                        plty.append(100000)
-                else:
-                    plty.append(100000)
-            #for p in plot_array:
-            #    cv2.circle(gc,(p,row),3,count,-1,8)
             backwards.append([row,col,temp[1]])
-            pltx = list(range(len(plty)))
-            #plt.scatter(pltx,plty)
-            #plt.scatter(temp[1]-450,[temp[0]],color='r')
-            #plt.plot(list(range(len(temps_plot))),temps_plot)
-            #plt.xlabel('pixel') 
-            #plt.ylabel(method)
-            #cv2.circle(gc,(col,row),3,count,-1,8)
-            #cv2.circle(gc,(temp[1],row),3,count,-1,8)
             replacement = np.full((size,size),abs(col-(temp[1]-c/2)),np.uint64)
             try:
                 disparities[row-half_size:row+half_size+1,col-half_size:col+half_size+1] = replacement
@@ -381,15 +373,15 @@ def region_window(gc,size,method):
                 disparities[row-half_size:row+half_size+1,col-half_size:col+half_size+1] = replacement
                
                 
-    disparities,maxd,mind = norm(disparities,20,255,2)
+    disparities,maxd,mind = norm(disparities,20,255,2,technique)
     disparities = disparities.astype(np.uint8)
     return disparities,backwards,maxd,mind
-    #return gc,backwards
 
-def backwards_check(gc,backwards,dmap,size,method):
+def backwards_check(gc,backwards,dmap,size,method): 
     #back = row,col,newcol
     d = cp.copy(dmap)
     r,c = gc.shape
+    num = c/15
     replacement = np.full((size,size),0,dtype=np.uint8)
     half_size = int(size/2)
     if method == "descriptor":
@@ -399,9 +391,9 @@ def backwards_check(gc,backwards,dmap,size,method):
             if method != "ncc":
                 temp = [1000000,0]
             else:
-                temp = [-1,0]
+                temp = [-1000000,0]
             window = make_window(size,gc,back[0],back[2])
-            for col in range((back[2]-(c/2)),(back[2]-(c/2))+60):            
+            for col in range((back[2]-(c/2)),(back[2]-(c/2))+num):            
                     score = 1000000
                     temp_window = make_window(size,gc,back[0],col)
                     if method == "sad":
@@ -413,7 +405,7 @@ def backwards_check(gc,backwards,dmap,size,method):
                     if compare(score,temp[0],method):
                         temp = [score,col]
 
-            if abs((temp[1]-c/2)-back[1])<5:
+            if abs(temp[1]-back[1])>size:
                 try:
                     d[back[0]-half_size:back[0]+half_size+1,back[1]-half_size:back[1]+half_size+1] = replacement 
                 except:
@@ -427,6 +419,7 @@ def backwards_check(gc,backwards,dmap,size,method):
 
 def feature(gc,method,size,level):
     hc = cv2.cornerHarris(gc,3,3,.04)
+    #hcn,maxh,minh = norm(hc,0,255,2)
     hcn = cv2.normalize(hc,0,255)
     x,y = hcn.shape
     lfeat = []
@@ -442,6 +435,7 @@ def feature(gc,method,size,level):
 
 def window_based(lfeat,hcn,method,size,gc,level):
     r,c = hcn.shape
+    num = c/18
     disparities = np.zeros((r,c/2))
     backwards = []
     for feat in lfeat:
@@ -452,12 +446,12 @@ def window_based(lfeat,hcn,method,size,gc,level):
         window = make_window(size,gc,feat[2],feat[1])
         window2 = make_window(size+2,gc,feat[2],feat[1])
         try:
-            first = (feat[1] - level[feat[2],feat[1]]) + (c/2) -50
+            first = (feat[1] - level[feat[2],feat[1]]) + (c/2) -num
             if first < c/2:
                 first = c/2
             second = (feat[1] - level[feat[2],feat[1]]) + c/2 
         except:
-            first = feat[1]+(c/2)-50
+            first = feat[1]+(c/2)-num
             if first < c/2:
                 first = c/2
             second = feat[1]+(c/2)
@@ -478,11 +472,11 @@ def window_based(lfeat,hcn,method,size,gc,level):
                    score2 = ssd(window2,t2w)
                 if method == "ncc":
                    score2 = ncc(window2,t2w)
-                if compare(score,temp[2],method):
+                if compare(score2,temp[2],method):
                     temp = [score,col,score2]
         disparities[feat[2],feat[1]] = abs(feat[1]-(temp[1]-c/2))
         backwards.append([feat[2],feat[1],temp[1]])
-    disparities,maxd,mind = norm(disparities,20,255,2)
+    disparities,maxd,mind = norm(disparities,20,255,11,'feature')
     disparities = disparities.astype(np.uint8)
     return disparities,backwards
     
@@ -531,51 +525,39 @@ def merge(weak,strong):
                 strong[row,col] = weak[row,col]
     return strong
         
-def multi_res(gc,g1,depth,size,method,matching):
+def multi_res(gc,g1,depth,size):
     images = []
     edisp = 0
     for num in range(0,depth):
         images.append(reduce(gc,2**num))
     for image in range(depth-1,-1,-1):
+        matching = str(raw_input('What technique would you like to use (region,feature):\n'))
+        method = raw_input('Matching method (sad,ssd,ncc,descriptor[feature-based-only]\n')
+        print matching
+        print method 
         print image
         if matching == "region":
             if image+1 == depth:
-                disp,backwards,maxd,mind = region_window(images[image],size,method)
-                #print "backwards"
-                disp1 = backwards_check(gc,backwards,disp,size,method)
-                #print "interpolate"
+                disp,backwards,maxd,mind = region_window(images[image],size,method,matching)
+                disp1 = backwards_check(images[image],backwards,disp,size,method)
                 disp2 = interpolate(disp1)
                 edisp = expand(disp2,2)
             else:
-                if mind <20:
-                    mind = 20
-                disp,backwards,maxd,mind = multi_region_window(images[image],size,method,edisp,maxd,mind)
-                #print "backwards"
-                disp1 = backwards_check(gc,backwards,disp,size,method)
-                edisp = merge(edisp,disp1)
-                #print "interpolate"
-                #edisp  = interpolate(disp1)
+                disp,backwards,maxd,mind = multi_region_window(images[image],size,method,edisp,maxd,mind,matching)
+                disp1 = backwards_check(images[image],backwards,disp,size,method)
+                edisp  = interpolate(disp1)
                 if image !=0:
                     edisp = expand(edisp,2)
         if matching == "feature":
             if image+1==depth:
                 disp,backwards = feature(images[image],method,size,"outer")
-                disp_back = backwards_check(gc,backwards,disp,size,method)
-                interp = interpolate_feature2(disp_back,g1)
+                disp_back = backwards_check(images[image],backwards,disp,size,method)
+                interp,maxd,mind = interpolate_feature2(disp_back,g1)
                 edisp = expand(interp,2)
             else:
                 disp,backwards = feature(images[image],method,size,edisp)
-                disp_back = backwards_check(gc,backwards,disp,size,method)
-                interp = interpolate_feature2(disp_back,g1)
-                r,d = interp.shape
-                for row iin range(0,r):
-                    for col in range(0,0)
-                        dis[row,lininen
-            
-                
-                cv2.imshow('i',interp)
-                cv2.waitKey(0)
-                edisp = merge(edisp,interp)
+                disp_back = backwards_check(images[image],backwards,disp,size,method)
+                edisp,maxd,mind = interpolate_feature2(disp_back,g1)
                 if image !=0:
                     edisp = expand(edisp,2)
     return edisp
@@ -615,7 +597,7 @@ def descriptor(lfeat,hcn):
         disparities[feat[2],feat[1]] = abs(feat[1]-(top[0]-(y/2)))
         backwards.append([feat[2],feat[1],top[0]])
 
-    disparities,maxd,mind=norm(disparities,20,255,2)
+    disparities,maxd,mind=norm(disparities,20,255,2,'feature')
     disparities = disparities.astype(np.uint8)
     return disparities,backwards 
 
@@ -626,71 +608,101 @@ g1 = cv2.cvtColor(img1,cv2.COLOR_BGR2GRAY)
 g2 = cv2.cvtColor(img2,cv2.COLOR_BGR2GRAY)
 c = np.concatenate((img1,img2),axis = 1)
 gc = np.concatenate((g1,g2),axis = 1)
+test =False 
+if not(test):
+    try:
+        i = input('Welcome to PR2 Matt Schmittle.\nNote, this program is not optimized so computation times may vary. \nPRESS ENTER TO CONTINUE')
+    except:
+        multi = int(raw_input('Multi-resolution stereo analysis (1/0):\n'))
+        if multi:
+            level = int(raw_input('Number of levels:\n'))
+        else:
+            technique = raw_input('What technique would you like to use (region,feature):\n')
+            method = raw_input('Matching method (sad,ssd,ncc,descriptor[feature-based-only]\n')
+        size = int(raw_input('Template matching size (odd numbers only)\n'))
 
+    print "Doing:"
 
+    if multi:
+        print "Multi Resolution " 
+        result = multi_res(gc,g1,level,size)
+    else:
+        print technique+" "+method
+        if technique == "region":
+            disp,backwards,maxd,mind = region_window(gc,size,method,'region')
+            disp1 = backwards_check(gc,backwards,disp,size,method)
+            result = interpolate(disp1)
+        if technique == "feature":
+            disp,backwards = feature(gc,method,size,"outer")
+            disp_back = backwards_check(gc,backwards,disp,size,method)
+            cv2.imshow('back',disp_back)
+            result,maxf,minf= interpolate_feature2(disp_back,g1)
+
+    cv2.imshow('result',result)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 #Testing for failures
 
 #feature Based testing
-string = "hi"
-multi_feature = multi_res(gc,g1,3,5,"ncc","feature")
-cv2.imshow(string,multi_feature)
-go =False
-if go:
+#string = "hi"
+#multi_feature = multi_res(gc,g1,3,5,"ncc","feature")
+#cv2.imshow('sigh',multi_feature)
+if test:
     try:
         string = 'feat-sad-5'
-        print "attempting " + string + "..."
+        print("attempting " + string + "...")
         multi_feature = multi_res(gc,g1,3,5,"sad","feature")
         cv2.imshow(string,multi_feature)
     except:
-        print string + " failed"
+        print(string + " failed")
     try:
         string = 'feat-ssd-5'
-        print "attempting " + string + "..."
+        print("attempting " + string + "...")
         multi_feature = multi_res(gc,g1,3,5,"ssd","feature")
         cv2.imshow(string,multi_feature)
     except:
-        print string + " failed"
+        print(string + " failed")
 
     try:
         string = 'feat-ncc-5'
-        print "attempting " + string + "..."
+        print("attempting " + string + "...")
         multi_feature = multi_res(gc,g1,3,5,"ncc","feature")
         cv2.imshow(string,multi_feature)
     except:
-        print string + " failed"
+        print(string + " failed")
     try:
         string = 'feat-descriptor-5'
-        print "attempting " + string + "..."
+        print("attempting " + string + "...")
         multi_feature = multi_res(gc,g1,3,5,"descriptor","feature")
         cv2.imshow(string,multi_feature)
     except:
-        print string + " failed"
+        print(string + " failed")
 
     #region based testing 
     try:
         string = 'region-sad-5'
-        print "attempting " + string + "..."
+        print("attempting " + string + "...")
         multi_region = multi_res(gc,g1,3,5,"sad","region")
         cv2.imshow(string,multi_region)
     except:
-        print string + " failed"
+        print(string + " failed")
 
     try:
         string = 'region-ssd-5'
-        print "attempting " + string + "..."
+        print("attempting " + string + "...")
         multi_region = multi_res(gc,g1,3,5,"ssd","region")
         cv2.imshow(string,multi_region)
     except:
-        print string + " failed"
+        print(string + " failed")
 
     try:
         string = 'region-ncc-5'
-        print "attempting " + string + "..."
+        print("attempting " + string + "...")
         multi_region = multi_res(gc,g1,3,5,"ncc","region")
         cv2.imshow(string,multi_region)
     except:
-        print string + " failed"
+        print(string + " failed")
 
 cv2.waitKey(0)
 
